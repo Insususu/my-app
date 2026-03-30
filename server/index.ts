@@ -21,8 +21,12 @@ app.use(router);
 const distPath = path.join(__dirname, '..', '..', 'dist');
 app.use(express.static(distPath));
 
-// SPA 폴백: 모든 non-API 경로를 index.html로
-app.get('/{*splat}', (_req, res) => {
+// SPA 폴백: API가 아닌 모든 경로를 index.html로
+app.get('/{*splat}', (req, res) => {
+  if (req.path.startsWith('/api')) {
+    res.status(404).json({ error: 'API endpoint not found' });
+    return;
+  }
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
