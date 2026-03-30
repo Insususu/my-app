@@ -15,7 +15,8 @@ router.get('/api/posts', async (_req: Request, res: Response) => {
 
 router.get('/api/posts/:id', async (req: Request, res: Response) => {
   try {
-    const post = await fetchPostDetail(req.params.id);
+    const id = req.params.id as string;
+    const post = await fetchPostDetail(id);
     res.json(post);
   } catch (error) {
     console.error(`Failed to fetch post ${req.params.id}:`, error);
