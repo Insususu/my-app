@@ -161,7 +161,25 @@ async function fetchPage(url: string): Promise<cheerio.CheerioAPI> {
     timeout: 10000,
     responseType: 'arraybuffer',
   });
-  const html = new TextDecoder('euc-kr').decode(response.data);
+
+  // Content-Type 헤더에서 인코딩 감지
+  const contentType = (response.headers['content-type'] || '') as string;
+  let encoding = 'utf-8';
+
+  const charsetMatch = contentType.match(/charset=([^\s;]+)/i);
+  if (charsetMatch) {
+    encoding = charsetMatch[1].toLowerCase().replace(/^["']|["']$/g, '');
+  }
+
+  // 먼저 UTF-8로 디코딩 시도하고, HTML meta charset 확인
+  let html = new TextDecoder('utf-8').decode(response.data);
+
+  // <meta charset="euc-kr"> 또는 <meta content="text/html; charset=euc-kr"> 패턴 확인
+  const metaCharsetMatch = html.match(/charset=["']?(euc-kr|euc_kr|ms949)["']?/i);
+  if (metaCharsetMatch || encoding === 'euc-kr' || encoding === 'euc_kr') {
+    html = new TextDecoder('euc-kr').decode(response.data);
+  }
+
   return cheerio.load(html);
 }
 
