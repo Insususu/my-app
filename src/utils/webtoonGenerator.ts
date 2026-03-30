@@ -363,6 +363,7 @@ export async function renderWebtoon(canvas: HTMLCanvasElement, panels: WebtoonPa
   }
 
   canvas.height = totalHeight;
+  console.log(`[renderWebtoon] 캔버스 크기: ${CANVAS_WIDTH}x${totalHeight}, 패널: ${panels.length}개`);
 
   // 전체 배경
   ctx.fillStyle = '#FFFFFF';

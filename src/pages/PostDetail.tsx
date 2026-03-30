@@ -20,8 +20,10 @@ export default function PostDetail() {
 
     getPostDetail(id)
       .then((data) => {
+        console.log('[PostDetail] 데이터 수신:', { title: data.title, contentLength: data.content.length, content: data.content });
         setPost(data);
         const generatedPanels = textToPanels(data.title, data.content, data.topComments);
+        console.log('[PostDetail] 패널 생성:', generatedPanels.length, '개');
         setPanels(generatedPanels);
       })
       .catch((err) => {

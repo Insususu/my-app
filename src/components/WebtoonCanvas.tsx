@@ -19,14 +19,24 @@ export default function WebtoonCanvas({ panels, title }: Props) {
   }, [panels]);
 
   const handleRender = async () => {
-    if (!canvasRef.current || panels.length === 0) return;
+    if (!canvasRef.current) {
+      console.error('[WebtoonCanvas] canvasRef가 없음');
+      return;
+    }
+    if (panels.length === 0) {
+      console.error('[WebtoonCanvas] 패널이 비어있음');
+      setError('변환할 내용이 없습니다. 원문이 정상적으로 로드되었는지 확인하세요.');
+      return;
+    }
+    console.log('[WebtoonCanvas] 렌더링 시작, 패널 수:', panels.length);
     setRendering(true);
     setError(null);
     try {
       await renderWebtoon(canvasRef.current, panels);
+      console.log('[WebtoonCanvas] 렌더링 완료');
       setRendered(true);
     } catch (err) {
-      console.error('썰툰 렌더링 실패:', err);
+      console.error('[WebtoonCanvas] 렌더링 실패:', err);
       setError(err instanceof Error ? err.message : '썰툰 생성 중 오류가 발생했습니다.');
     } finally {
       setRendering(false);
