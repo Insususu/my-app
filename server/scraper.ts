@@ -295,61 +295,63 @@ export async function fetchBestPosts(): Promise<ScrapedPost[]> {
   }
 }
 
+function htmlToLines(html: string): string[] {
+  html = html.replace(/<br\s*\/?>/gi, '\n');
+  html = html.replace(/<\/p>/gi, '\n');
+  html = html.replace(/<\/div>/gi, '\n');
+  html = html.replace(/<\/li>/gi, '\n');
+  const text = html.replace(/<[^>]+>/g, '').trim();
+  return text
+    .split(/\n{1,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
 function extractContent($: cheerio.CheerioAPI): string[] {
-  // 다양한 셀렉터를 순서대로 시도
+  // 네이트판 실제 구조 기반 셀렉터 (우선순위 순)
   const selectors = [
+    '#contentArea',                    // 네이트판 메인 본문 영역
+    '#pann-content',                   // 네이트판 콘텐츠 div
+    '.post-content',
     '#contentArea .posting',
     '#contentArea .postContent',
     '.content-area',
     '.posting-area',
     '#areaContent',
-    '.post-content',
     '#postContent',
     '#content .desc',
     '.desc',
-    '#container .content',
     'article',
-    '.article-content',
-    '#articleBody',
     '.viewContent',
     '#viewContent',
     '.post_article',
-    '#body',
   ];
 
   for (const selector of selectors) {
-    const el = $(selector);
-    if (el.length) {
-      let html = el.first().html() || '';
-      html = html.replace(/<br\s*\/?>/gi, '\n');
-      html = html.replace(/<\/p>/gi, '\n');
-      html = html.replace(/<\/div>/gi, '\n');
-      const text = html.replace(/<[^>]+>/g, '').trim();
-      const paragraphs = text
-        .split(/\n{1,}/)
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0);
-      if (paragraphs.length > 0) {
-        console.log(`[scraper] 본문 추출 성공 (selector: ${selector}, ${paragraphs.length}문단)`);
-        return paragraphs;
-      }
+    const el = $(selector).first();
+    if (!el.length) continue;
+
+    // 본문 내 불필요한 요소 제거 (복사본에서)
+    const clone = el.clone();
+    clone.find('script, style, .ad, .banner, .writer, .post-tit-info, .cmt_list, .comment-list, .bestComment, .reply-list, iframe, .side, .aside').remove();
+
+    const html = clone.html() || '';
+    const paragraphs = htmlToLines(html);
+
+    if (paragraphs.length > 0) {
+      console.log(`[scraper] 본문 추출 성공 (selector: ${selector}, ${paragraphs.length}문단)`);
+      return paragraphs;
     }
   }
 
-  // 최후의 수단: 전체 body에서 script/style 제거 후 텍스트 추출
+  // 최후의 수단: body에서 불필요 요소 제거 후 텍스트 추출
   const $body = $('body').clone();
-  $body.find('script, style, nav, header, footer, .header, .footer, .gnb, .lnb, .sidebar, .ad, .banner').remove();
-  let bodyText = $body.text().trim();
-  // 연속 공백/줄바꿈 정리
-  bodyText = bodyText.replace(/\s{3,}/g, '\n\n');
-  const lines = bodyText
-    .split(/\n{1,}/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 10); // 너무 짧은 라인 제거
+  $body.find('script, style, nav, header, footer, .header, .footer, .gnb, .lnb, .sidebar, .ad, .banner, .cmt_list, .comment-list, .bestComment, .reply-list, .post-tit-info, .writer').remove();
+  const bodyHtml = $body.html() || '';
+  const lines = htmlToLines(bodyHtml).filter((l) => l.length > 10);
 
   if (lines.length > 0) {
     console.log(`[scraper] body fallback으로 ${lines.length}줄 추출`);
-    // 최대 30줄만 사용
     return lines.slice(0, 30);
   }
 
@@ -360,40 +362,43 @@ export async function fetchPostDetail(id: string): Promise<ScrapedPostDetail> {
   try {
     const $ = await fetchPage(`${BASE_URL}/talk/${id}`);
 
-    // 제목: 넓은 범위의 셀렉터 시도
+    // 제목: 네이트판 실제 구조 기반
     let title = '';
     const titleSelectors = [
-      'h3.aSubject', 'h4.aSubject', '.post-title', '#contentArea h3',
-      '.tit-area h3', '.tit-area h4', '.article-title', 'h2.title',
-      'h3.title', '.view-title', '#title',
+      'h3.view-tit',                    // 네이트판 뷰 페이지 제목
+      '.post-tit-info h4',              // 네이트판 글 제목
+      'h3.aSubject', 'h4.aSubject',     // 레거시 네이트판
+      '#contentArea h3', '#contentArea h4',
+      '.tit-area h3', '.tit-area h4',
+      '.post-title', '.article-title',
+      'h2.title', 'h3.title',
     ];
     for (const sel of titleSelectors) {
       const t = $(sel).first().text().trim();
       if (t) { title = t; break; }
     }
     if (!title) {
-      // title 태그에서 " - 네이트판" 등 접미사 제거
-      title = $('title').text().trim().replace(/\s*[-|].*$/, '');
+      title = $('title').text().trim().replace(/\s*[-|–].*$/, '');
     }
 
     // 본문 추출
     const content = extractContent($);
 
-    // 메타 정보
-    const author = $('.nickBox, .nick, .writer, .author, .user-name, .username').first().text().trim() || '익명';
-    const date = $('.date, .datetime, .time, .postDate, .regdate').first().text().trim() || '';
-    const hits = extractNum($('.count, .hit, .viewCount, .view-count, .hits').first().text());
-    const likes = extractNum($('.like, .good, .recommend, .likeBtnArea .count, .like-count').first().text());
-    const commentsCount = extractNum($('.comment, .reply, .cmt, .replyCount, .comment-count').first().text());
+    // 메타 정보 - 네이트판 실제 구조 기반
+    const author = $('.writer .nick, .writer, .nick, .nickBox, .author, .user-name').first().text().trim() || '익명';
+    const date = $('#date.num, .date, .datetime, .time, .postDate, .regdate').first().text().trim() || '';
+    const hits = extractNum($('#views.num, #views, .count, .hit, .viewCount').first().text());
+    const likes = extractNum($('#recs.num, #R_cnt.count, .up .count, .like, .good, .recommend').first().text());
+    const commentsCount = extractNum($('#replies.count, .cmt_tit strong, .comment, .reply, .cmt, .replyCount').first().text());
 
-    // 댓글 파싱
+    // 댓글 파싱 - 네이트판 실제 구조 기반
     const topComments: { author: string; text: string; likes: number }[] = [];
-    const commentSelectors = '.bestComment li, .best-reply li, .comment-list li, .reply-list li, .cmt_list li, .comment-item, .reply-item';
+    const commentSelectors = '.cmt_list li, .bestComment li, .best-reply li, .comment-list li, .reply-list li, .comment-item, .reply-item';
     $(commentSelectors)
       .slice(0, 5)
       .each((_, el) => {
         const $comment = $(el);
-        const cAuthor = $comment.find('.nickBox, .nick, .author, .user-name').first().text().trim() || '익명';
+        const cAuthor = $comment.find('.nick, .nickBox, .author, .user-name').first().text().trim() || '익명';
         const cText = $comment.find('.usertxt, .txt, .comment-text, .cmt_txt, p, .text').first().text().trim();
         const cLikes = extractNum($comment.find('.like, .good, .recommend').first().text());
         if (cText) {
