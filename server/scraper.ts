@@ -160,6 +160,62 @@ function getSampleDetail(id: string): ScrapedPostDetail {
 }
 // ── 샘플 데이터 끝 ────────────────────────────────────────────
 
+// ── 디버그: 페이지 HTML 구조 분석 ─────────────────────────────
+export async function debugPostPage(id: string): Promise<object> {
+  try {
+    const $ = await fetchPage(`${BASE_URL}/talk/${id}`);
+
+    // 주요 요소들의 존재 여부 및 텍스트 확인
+    const debug: Record<string, unknown> = {
+      title_tag: $('title').text().trim(),
+      h1: $('h1').first().text().trim().substring(0, 100),
+      h2: $('h2').first().text().trim().substring(0, 100),
+      h3: $('h3').first().text().trim().substring(0, 100),
+      h4: $('h4').first().text().trim().substring(0, 100),
+    };
+
+    // ID/class가 있는 div들의 목록
+    const divIds: string[] = [];
+    const divClasses: string[] = [];
+    $('div[id], div[class]').each((i, el) => {
+      if (i > 50) return;
+      const $el = $(el);
+      const id = $el.attr('id');
+      const cls = $el.attr('class');
+      if (id) divIds.push(id);
+      if (cls) divClasses.push(cls.split(/\s+/).slice(0, 3).join(' '));
+    });
+    debug.div_ids = [...new Set(divIds)].slice(0, 30);
+    debug.div_classes = [...new Set(divClasses)].slice(0, 30);
+
+    // 시도하는 셀렉터별 결과
+    const contentSelectors = [
+      '#contentArea .posting', '#contentArea .postContent', '.content-area',
+      '.posting-area', '#areaContent', '.post-content', '#postContent',
+      '#content .desc', '.desc', '#container .content', 'article',
+      '.article-content', '#articleBody', '.viewContent', '#viewContent',
+      '.post_article', '#body', '#content', '.contentArea',
+    ];
+    const selectorResults: Record<string, string> = {};
+    for (const sel of contentSelectors) {
+      const el = $(sel);
+      if (el.length) {
+        const text = el.first().text().trim();
+        selectorResults[sel] = `FOUND (${text.length}chars): ${text.substring(0, 80)}...`;
+      }
+    }
+    debug.selector_results = selectorResults;
+
+    // body의 처음 2000자 (태그 구조 포함)
+    const bodyHtml = $('body').html() || '';
+    debug.body_html_preview = bodyHtml.substring(0, 3000);
+
+    return debug;
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+}
+
 async function fetchPage(url: string): Promise<cheerio.CheerioAPI> {
   const response = await axios.get(url, {
     headers,
