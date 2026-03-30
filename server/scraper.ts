@@ -29,6 +29,9 @@ export interface ScrapedPostDetail extends ScrapedPost {
   topComments: { author: string; text: string; likes: number }[];
 }
 
+// ── 목록 캐시 (상세 파싱 실패 시 제목/메타 활용) ──────────────────
+const postCache = new Map<string, ScrapedPost>();
+
 // ── 샘플 데이터 (외부 접속 불가 시 폴백) ──────────────────────────
 const SAMPLE_POSTS: ScrapedPost[] = [
   { id: '1001', title: '오늘 카페에서 있었던 소름돋는 일', author: '커피좋아', date: '03.30', hits: 45230, likes: 1823, comments: 342 },
@@ -119,11 +122,13 @@ const SAMPLE_DETAILS: Record<string, ScrapedPostDetail> = {
   },
 };
 
-// 나머지 ID에 대한 기본 상세 데이터 생성
 function getSampleDetail(id: string): ScrapedPostDetail {
   if (SAMPLE_DETAILS[id]) return SAMPLE_DETAILS[id];
 
-  const post = SAMPLE_POSTS.find((p) => p.id === id);
+  // 캐시된 목록 데이터에서 제목/메타 활용
+  const cached = postCache.get(id);
+  const post = cached || SAMPLE_POSTS.find((p) => p.id === id);
+
   if (!post) {
     return {
       id, title: '게시글을 찾을 수 없습니다', author: '알수없음', date: '',
@@ -161,8 +166,28 @@ async function fetchPage(url: string): Promise<cheerio.CheerioAPI> {
     timeout: 10000,
     responseType: 'arraybuffer',
   });
-  const html = new TextDecoder('euc-kr').decode(response.data);
+
+  const contentType = (response.headers['content-type'] || '') as string;
+  let encoding = 'utf-8';
+
+  const charsetMatch = contentType.match(/charset=([^\s;]+)/i);
+  if (charsetMatch) {
+    encoding = charsetMatch[1].toLowerCase().replace(/^["']|["']$/g, '');
+  }
+
+  let html = new TextDecoder('utf-8').decode(response.data);
+
+  const metaCharsetMatch = html.match(/charset=["']?(euc-kr|euc_kr|ms949)["']?/i);
+  if (metaCharsetMatch || encoding === 'euc-kr' || encoding === 'euc_kr') {
+    html = new TextDecoder('euc-kr').decode(response.data);
+  }
+
   return cheerio.load(html);
+}
+
+function extractNum(text: string): number {
+  const match = text.replace(/,/g, '').match(/\d+/);
+  return match ? parseInt(match[0], 10) : 0;
 }
 
 export async function fetchBestPosts(): Promise<ScrapedPost[]> {
@@ -182,11 +207,6 @@ export async function fetchBestPosts(): Promise<ScrapedPost[]> {
       const title = $link.text().trim();
       if (!title) return;
 
-      const extractNum = (text: string): number => {
-        const match = text.replace(/,/g, '').match(/\d+/);
-        return match ? parseInt(match[0], 10) : 0;
-      };
-
       const author = $el.find('.nickBox, .nick, .author, .writer').first().text().trim() || '익명';
       const date = $el.find('.date, .time, .datetime').first().text().trim() || '';
       const hits = extractNum($el.find('.count, .hit, .hits, .view').first().text());
@@ -203,9 +223,14 @@ export async function fetchBestPosts(): Promise<ScrapedPost[]> {
       return true;
     });
 
-    if (unique.length > 0) return unique;
+    if (unique.length > 0) {
+      // 캐시에 저장
+      for (const p of unique) {
+        postCache.set(p.id, p);
+      }
+      return unique;
+    }
 
-    // 파싱 결과가 없으면 샘플 데이터 사용
     console.log('[scraper] 파싱 결과 없음, 샘플 데이터 사용');
     return SAMPLE_POSTS;
   } catch (error) {
@@ -214,45 +239,106 @@ export async function fetchBestPosts(): Promise<ScrapedPost[]> {
   }
 }
 
+function extractContent($: cheerio.CheerioAPI): string[] {
+  // 다양한 셀렉터를 순서대로 시도
+  const selectors = [
+    '#contentArea .posting',
+    '#contentArea .postContent',
+    '.content-area',
+    '.posting-area',
+    '#areaContent',
+    '.post-content',
+    '#postContent',
+    '#content .desc',
+    '.desc',
+    '#container .content',
+    'article',
+    '.article-content',
+    '#articleBody',
+    '.viewContent',
+    '#viewContent',
+    '.post_article',
+    '#body',
+  ];
+
+  for (const selector of selectors) {
+    const el = $(selector);
+    if (el.length) {
+      let html = el.first().html() || '';
+      html = html.replace(/<br\s*\/?>/gi, '\n');
+      html = html.replace(/<\/p>/gi, '\n');
+      html = html.replace(/<\/div>/gi, '\n');
+      const text = html.replace(/<[^>]+>/g, '').trim();
+      const paragraphs = text
+        .split(/\n{1,}/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      if (paragraphs.length > 0) {
+        console.log(`[scraper] 본문 추출 성공 (selector: ${selector}, ${paragraphs.length}문단)`);
+        return paragraphs;
+      }
+    }
+  }
+
+  // 최후의 수단: 전체 body에서 script/style 제거 후 텍스트 추출
+  const $body = $('body').clone();
+  $body.find('script, style, nav, header, footer, .header, .footer, .gnb, .lnb, .sidebar, .ad, .banner').remove();
+  let bodyText = $body.text().trim();
+  // 연속 공백/줄바꿈 정리
+  bodyText = bodyText.replace(/\s{3,}/g, '\n\n');
+  const lines = bodyText
+    .split(/\n{1,}/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 10); // 너무 짧은 라인 제거
+
+  if (lines.length > 0) {
+    console.log(`[scraper] body fallback으로 ${lines.length}줄 추출`);
+    // 최대 30줄만 사용
+    return lines.slice(0, 30);
+  }
+
+  return [];
+}
+
 export async function fetchPostDetail(id: string): Promise<ScrapedPostDetail> {
   try {
     const $ = await fetchPage(`${BASE_URL}/talk/${id}`);
 
-    const title =
-      $('h3.aSubject, .post-title, #contentArea h3, .tit-area h3, h4.aSubject')
-        .first()
-        .text()
-        .trim() || $('title').text().trim();
+    // 제목: 넓은 범위의 셀렉터 시도
+    let title = '';
+    const titleSelectors = [
+      'h3.aSubject', 'h4.aSubject', '.post-title', '#contentArea h3',
+      '.tit-area h3', '.tit-area h4', '.article-title', 'h2.title',
+      'h3.title', '.view-title', '#title',
+    ];
+    for (const sel of titleSelectors) {
+      const t = $(sel).first().text().trim();
+      if (t) { title = t; break; }
+    }
+    if (!title) {
+      // title 태그에서 " - 네이트판" 등 접미사 제거
+      title = $('title').text().trim().replace(/\s*[-|].*$/, '');
+    }
 
-    const contentEl = $('#contentArea .posting, #contentArea .postContent, .content-area, .posting-area, #areaContent, .post-content, #postContent');
-    let contentHtml = contentEl.first().html() || '';
-    contentHtml = contentHtml.replace(/<br\s*\/?>/gi, '\n');
-    const contentText = contentHtml.replace(/<[^>]+>/g, '').trim();
+    // 본문 추출
+    const content = extractContent($);
 
-    const content = contentText
-      .split(/\n{1,}/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
+    // 메타 정보
+    const author = $('.nickBox, .nick, .writer, .author, .user-name, .username').first().text().trim() || '익명';
+    const date = $('.date, .datetime, .time, .postDate, .regdate').first().text().trim() || '';
+    const hits = extractNum($('.count, .hit, .viewCount, .view-count, .hits').first().text());
+    const likes = extractNum($('.like, .good, .recommend, .likeBtnArea .count, .like-count').first().text());
+    const commentsCount = extractNum($('.comment, .reply, .cmt, .replyCount, .comment-count').first().text());
 
-    const author = $('.nickBox, .nick, .writer, .author').first().text().trim() || '익명';
-    const date = $('.date, .datetime, .time, .postDate').first().text().trim() || '';
-
-    const extractNum = (text: string): number => {
-      const match = text.replace(/,/g, '').match(/\d+/);
-      return match ? parseInt(match[0], 10) : 0;
-    };
-
-    const hits = extractNum($('.count, .hit, .viewCount').first().text());
-    const likes = extractNum($('.like, .good, .recommend, .likeBtnArea .count').first().text());
-    const commentsCount = extractNum($('.comment, .reply, .cmt, .replyCount').first().text());
-
+    // 댓글 파싱
     const topComments: { author: string; text: string; likes: number }[] = [];
-    $('.bestComment li, .best-reply li, .comment-list li, .reply-list li, .cmt_list li')
+    const commentSelectors = '.bestComment li, .best-reply li, .comment-list li, .reply-list li, .cmt_list li, .comment-item, .reply-item';
+    $(commentSelectors)
       .slice(0, 5)
       .each((_, el) => {
         const $comment = $(el);
-        const cAuthor = $comment.find('.nickBox, .nick, .author').first().text().trim() || '익명';
-        const cText = $comment.find('.usertxt, .txt, .comment-text, .cmt_txt, p').first().text().trim();
+        const cAuthor = $comment.find('.nickBox, .nick, .author, .user-name').first().text().trim() || '익명';
+        const cText = $comment.find('.usertxt, .txt, .comment-text, .cmt_txt, p, .text').first().text().trim();
         const cLikes = extractNum($comment.find('.like, .good, .recommend').first().text());
         if (cText) {
           topComments.push({ author: cAuthor, text: cText, likes: cLikes });
@@ -263,10 +349,37 @@ export async function fetchPostDetail(id: string): Promise<ScrapedPostDetail> {
       return { id, title, author, date, hits, likes, comments: commentsCount, content, topComments };
     }
 
-    console.log(`[scraper] 글 ${id} 본문 파싱 실패, 샘플 데이터 사용`);
+    // 본문은 못 가져왔지만 제목은 있는 경우 → 캐시+제목으로 폴백
+    console.log(`[scraper] 글 ${id} 본문 파싱 실패`);
+    const cached = postCache.get(id);
+    if (cached || title) {
+      return {
+        id,
+        title: title || cached?.title || '제목 없음',
+        author: author || cached?.author || '익명',
+        date: date || cached?.date || '',
+        hits: hits || cached?.hits || 0,
+        likes: likes || cached?.likes || 0,
+        comments: commentsCount || cached?.comments || 0,
+        content: ['본문을 가져오지 못했습니다. 네이트판에서 직접 확인해주세요.'],
+        topComments,
+      };
+    }
+
     return getSampleDetail(id);
   } catch (error) {
-    console.log(`[scraper] 글 ${id} 접속 실패, 샘플 데이터 사용:`, (error as Error).message);
+    console.log(`[scraper] 글 ${id} 접속 실패:`, (error as Error).message);
+
+    // 캐시에서 제목/메타라도 가져오기
+    const cached = postCache.get(id);
+    if (cached) {
+      return {
+        ...cached,
+        content: ['글을 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'],
+        topComments: [],
+      };
+    }
+
     return getSampleDetail(id);
   }
 }
