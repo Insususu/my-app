@@ -320,16 +320,29 @@ function drawCommentPanel(ctx: CanvasRenderingContext2D, panel: WebtoonPanel, y:
 }
 
 export async function renderWebtoon(canvas: HTMLCanvasElement, panels: WebtoonPanel[]): Promise<void> {
+  if (panels.length === 0) {
+    throw new Error('생성할 패널이 없습니다.');
+  }
+
   // 폰트 로딩 대기
   try {
-    await document.fonts.load(`18px ${FONT_FAMILY}`);
-    await document.fonts.load(`bold 28px ${FONT_FAMILY}`);
+    await document.fonts.load('18px "Noto Sans KR"');
+    await document.fonts.load('bold 28px "Noto Sans KR"');
   } catch {
     // 폰트 로딩 실패 시 기본 폰트로 진행
   }
-  await document.fonts.ready;
 
-  const ctx = canvas.getContext('2d')!;
+  try {
+    await document.fonts.ready;
+  } catch {
+    // fonts.ready 실패 시 무시
+  }
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Canvas 2D 컨텍스트를 생성할 수 없습니다.');
+  }
+
   canvas.width = CANVAS_WIDTH;
 
   // 전체 높이 계산
@@ -342,6 +355,12 @@ export async function renderWebtoon(canvas: HTMLCanvasElement, panels: WebtoonPa
   }
   // 패널 간 구분선 높이
   totalHeight += (panels.length - 1) * 4;
+
+  // 캔버스 최대 높이 제한 (브라우저별 제한 약 32767px)
+  const maxCanvasHeight = 30000;
+  if (totalHeight > maxCanvasHeight) {
+    totalHeight = maxCanvasHeight;
+  }
 
   canvas.height = totalHeight;
 
