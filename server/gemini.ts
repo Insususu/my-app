@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyA0sKy2U3FStAvPoIEXjPQUmM7GkfkfBwg';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // Imagen 4 모델 (우선순위 순)
