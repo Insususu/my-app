@@ -25,7 +25,8 @@ export async function getPostDetail(id: string): Promise<PostDetail> {
 
 export interface WebtoonScene {
   sceneText: string;
-  imageUrl: string;
+  imageBase64: string;
+  mimeType: string;
 }
 
 export async function generateWebtoon(title: string, content: string[]): Promise<WebtoonScene[]> {

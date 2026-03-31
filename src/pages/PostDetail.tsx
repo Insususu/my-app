@@ -212,9 +212,9 @@ export default function PostDetail() {
               {scenes.map((scene, i) => (
                 <div key={i} className="bg-white border-x border-gray-200">
                   {/* AI 생성 이미지 */}
-                  {scene.imageUrl ? (
+                  {scene.imageBase64 ? (
                     <img
-                      src={scene.imageUrl}
+                      src={`data:${scene.mimeType};base64,${scene.imageBase64}`}
                       alt={`장면 ${i + 1}`}
                       className="w-full"
                       loading="lazy"
