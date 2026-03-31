@@ -1,14 +1,16 @@
 import axios from 'axios';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyA0sKy2U3FStAvPoIEXjPQUmM7GkfkfBwg';
-// 이미지 생성 지원 모델 (우선순위 순으로 시도)
-const IMAGE_MODELS = [
-  'gemini-2.0-flash-preview-image-generation',
-  'gemini-2.0-flash-exp',
+
+// Imagen 4 모델 (우선순위 순)
+const IMAGEN_MODELS = [
+  'imagen-4.0-fast-generate-001',
+  'imagen-4.0-generate-001',
+  'imagen-4.0-ultra-generate-001',
 ];
 
-function getGeminiUrl(model: string): string {
-  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+function getImagenUrl(model: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${GEMINI_API_KEY}`;
 }
 
 export interface WebtoonScene {
@@ -21,7 +23,6 @@ export interface WebtoonScene {
 function groupIntoScenes(title: string, paragraphs: string[]): string[] {
   const scenes: string[] = [];
 
-  // 제목 장면
   scenes.push(title);
 
   if (paragraphs.length <= 5) {
@@ -40,61 +41,50 @@ function groupIntoScenes(title: string, paragraphs: string[]): string[] {
 }
 
 function buildPrompt(sceneText: string, sceneIndex: number): string {
+  const baseStyle = 'Korean webtoon style, manhwa illustration, clean lines, pastel colors, cute expressive characters, vertical panel format, no text or speech bubbles';
+
   if (sceneIndex === 0) {
-    return `한국 웹툰 스타일로 그림을 그려줘. 이것은 웹툰의 제목 장면이야.
-제목: "${sceneText}"
-- 세로형 웹툰 패널 (가로 800px, 세로 600px 비율)
-- 한국 웹툰/만화 스타일 (깔끔한 선, 파스텔 컬러)
-- 제목에 어울리는 분위기의 캐릭터와 배경
-- 텍스트는 넣지 마. 이미지만 그려줘.
-- 귀엽고 표현력 있는 캐릭터`;
+    return `${baseStyle}. Title scene for a story called "${sceneText}". Show the main character in a dramatic or eye-catching pose with a colorful background that sets the mood of the story.`;
   }
 
-  return `한국 웹툰 스타일로 이 장면의 그림을 그려줘.
-장면 내용: "${sceneText.substring(0, 300)}"
-- 세로형 웹툰 패널 (가로 800px, 세로 600px 비율)
-- 한국 웹툰/만화 스타일 (깔끔한 선, 파스텔 컬러)
-- 장면의 감정과 상황을 시각적으로 표현
-- 텍스트는 넣지 마. 이미지만 그려줘.
-- 대화 장면이면 캐릭터가 대화하는 모습
-- 귀엽고 표현력 있는 캐릭터`;
+  const scene = sceneText.substring(0, 200);
+  return `${baseStyle}. Illustrate this scene from a Korean online story: "${scene}". Show the emotions and situation visually with characters and background.`;
 }
 
-async function generateImage(prompt: string): Promise<{ imageBase64: string; mimeType: string } | null> {
-  for (const model of IMAGE_MODELS) {
+async function generateImageWithImagen(prompt: string): Promise<{ imageBase64: string; mimeType: string } | null> {
+  for (const model of IMAGEN_MODELS) {
     try {
-      console.log(`[gemini] 모델 ${model} 시도 중...`);
+      console.log(`[imagen] 모델 ${model} 시도 중...`);
       const response = await axios.post(
-        getGeminiUrl(model),
+        getImagenUrl(model),
         {
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseModalities: ['TEXT', 'IMAGE'],
+          instances: [{ prompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: '3:4',
           },
         },
         { timeout: 60000 },
       );
 
-      const parts = response.data?.candidates?.[0]?.content?.parts || [];
-      for (const part of parts) {
-        if (part.inlineData) {
-          console.log(`[gemini] 모델 ${model}에서 이미지 생성 성공`);
-          return {
-            imageBase64: part.inlineData.data || '',
-            mimeType: part.inlineData.mimeType || 'image/png',
-          };
-        }
+      const predictions = response.data?.predictions || [];
+      if (predictions.length > 0 && predictions[0].bytesBase64Encoded) {
+        console.log(`[imagen] 모델 ${model} 이미지 생성 성공`);
+        return {
+          imageBase64: predictions[0].bytesBase64Encoded,
+          mimeType: predictions[0].mimeType || 'image/png',
+        };
       }
-      console.log(`[gemini] 모델 ${model}: 응답에 이미지 없음`);
+
+      console.log(`[imagen] 모델 ${model}: 응답에 이미지 없음`);
     } catch (error: unknown) {
       const axiosErr = error as { response?: { status?: number; data?: unknown }; message?: string };
       const status = axiosErr.response?.status;
       const msg = axiosErr.message || 'unknown error';
-      console.error(`[gemini] 모델 ${model} 실패 (${status}): ${msg}`);
+      console.error(`[imagen] 모델 ${model} 실패 (${status}): ${msg}`);
       if (axiosErr.response?.data) {
-        console.error(`[gemini] 응답:`, JSON.stringify(axiosErr.response.data).substring(0, 500));
+        console.error(`[imagen] 응답:`, JSON.stringify(axiosErr.response.data).substring(0, 500));
       }
-      // 404 = 모델 없음 → 다음 모델 시도, 그 외 에러도 다음 모델 시도
       continue;
     }
   }
@@ -108,30 +98,31 @@ export async function generateWebtoonImages(
   const scenes = groupIntoScenes(title, paragraphs);
   const results: WebtoonScene[] = [];
 
-  console.log(`[gemini] ${scenes.length}개 장면 이미지 생성 시작`);
+  console.log(`[imagen] ${scenes.length}개 장면 이미지 생성 시작`);
 
   for (let i = 0; i < scenes.length; i++) {
     const sceneText = scenes[i];
     const prompt = buildPrompt(sceneText, i);
 
-    console.log(`[gemini] 장면 ${i + 1}/${scenes.length} 생성 중...`);
+    console.log(`[imagen] 장면 ${i + 1}/${scenes.length} 생성 중...`);
 
-    const image = await generateImage(prompt);
+    const image = await generateImageWithImagen(prompt);
 
     if (image) {
       results.push({ sceneText, imageBase64: image.imageBase64, mimeType: image.mimeType });
-      console.log(`[gemini] 장면 ${i + 1} 이미지 생성 성공`);
+      console.log(`[imagen] 장면 ${i + 1} 완료`);
     } else {
       results.push({ sceneText, imageBase64: '', mimeType: '' });
-      console.log(`[gemini] 장면 ${i + 1} 이미지 생성 실패`);
+      console.log(`[imagen] 장면 ${i + 1} 실패`);
     }
 
-    // API 속도 제한 방지
+    // API 속도 제한 방지 (2초 대기)
     if (i < scenes.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 
-  console.log(`[gemini] 완료: ${results.filter((r) => r.imageBase64).length}/${scenes.length}개 이미지 생성`);
+  const successCount = results.filter((r) => r.imageBase64).length;
+  console.log(`[imagen] 완료: ${successCount}/${scenes.length}개 이미지 생성`);
   return results;
 }
