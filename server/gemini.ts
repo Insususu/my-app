@@ -1,7 +1,15 @@
 import axios from 'axios';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyA0sKy2U3FStAvPoIEXjPQUmM7GkfkfBwg';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`;
+// 이미지 생성 지원 모델 (우선순위 순으로 시도)
+const IMAGE_MODELS = [
+  'gemini-2.0-flash-preview-image-generation',
+  'gemini-2.0-flash-exp',
+];
+
+function getGeminiUrl(model: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+}
 
 export interface WebtoonScene {
   sceneText: string;
@@ -53,31 +61,44 @@ function buildPrompt(sceneText: string, sceneIndex: number): string {
 }
 
 async function generateImage(prompt: string): Promise<{ imageBase64: string; mimeType: string } | null> {
-  try {
-    const response = await axios.post(
-      GEMINI_URL,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-      },
-      { timeout: 60000 },
-    );
+  for (const model of IMAGE_MODELS) {
+    try {
+      console.log(`[gemini] 모델 ${model} 시도 중...`);
+      const response = await axios.post(
+        getGeminiUrl(model),
+        {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseModalities: ['TEXT', 'IMAGE'],
+          },
+        },
+        { timeout: 60000 },
+      );
 
-    const parts = response.data?.candidates?.[0]?.content?.parts || [];
-    for (const part of parts) {
-      if (part.inlineData) {
-        return {
-          imageBase64: part.inlineData.data || '',
-          mimeType: part.inlineData.mimeType || 'image/png',
-        };
+      const parts = response.data?.candidates?.[0]?.content?.parts || [];
+      for (const part of parts) {
+        if (part.inlineData) {
+          console.log(`[gemini] 모델 ${model}에서 이미지 생성 성공`);
+          return {
+            imageBase64: part.inlineData.data || '',
+            mimeType: part.inlineData.mimeType || 'image/png',
+          };
+        }
       }
+      console.log(`[gemini] 모델 ${model}: 응답에 이미지 없음`);
+    } catch (error: unknown) {
+      const axiosErr = error as { response?: { status?: number; data?: unknown }; message?: string };
+      const status = axiosErr.response?.status;
+      const msg = axiosErr.message || 'unknown error';
+      console.error(`[gemini] 모델 ${model} 실패 (${status}): ${msg}`);
+      if (axiosErr.response?.data) {
+        console.error(`[gemini] 응답:`, JSON.stringify(axiosErr.response.data).substring(0, 500));
+      }
+      // 404 = 모델 없음 → 다음 모델 시도, 그 외 에러도 다음 모델 시도
+      continue;
     }
-    return null;
-  } catch (error) {
-    const msg = (error as Error).message;
-    console.error(`[gemini] API 호출 실패: ${msg}`);
-    return null;
   }
+  return null;
 }
 
 export async function generateWebtoonImages(
