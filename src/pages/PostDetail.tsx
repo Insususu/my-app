@@ -165,7 +165,7 @@ export default function PostDetail() {
             <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
               <p className="text-5xl mb-4">🎨</p>
               <p className="text-lg font-medium text-gray-700 mb-2">AI가 이 이야기를 웹툰으로 그려드립니다</p>
-              <p className="text-sm text-gray-500 mb-6">Gemini AI가 각 장면을 웹툰 스타일로 생성합니다</p>
+              <p className="text-sm text-gray-500 mb-6">AI가 각 장면을 웹툰 스타일로 생성합니다</p>
               <button
                 onClick={handleGenerate}
                 disabled={post.content.length === 0}
@@ -212,11 +212,12 @@ export default function PostDetail() {
               {scenes.map((scene, i) => (
                 <div key={i} className="bg-white border-x border-gray-200">
                   {/* AI 생성 이미지 */}
-                  {scene.imageBase64 ? (
+                  {scene.imageUrl ? (
                     <img
-                      src={`data:${scene.mimeType};base64,${scene.imageBase64}`}
+                      src={scene.imageUrl}
                       alt={`장면 ${i + 1}`}
                       className="w-full"
+                      loading="lazy"
                     />
                   ) : (
                     <div className="bg-gray-100 py-20 text-center text-gray-400">
