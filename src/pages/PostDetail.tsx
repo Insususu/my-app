@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import type { PostDetail as PostDetailType, WebtoonPanel } from '../types';
-import { getPostDetail } from '../utils/api';
-import { textToPanels } from '../utils/webtoonGenerator';
-import WebtoonCanvas from '../components/WebtoonCanvas';
+import type { PostDetail as PostDetailType } from '../types';
+import { getPostDetail, generateWebtoon, type WebtoonScene } from '../utils/api';
 
 export default function PostDetail() {
   const { id } = useParams<{ id: string }>();
   const [post, setPost] = useState<PostDetailType | null>(null);
-  const [panels, setPanels] = useState<WebtoonPanel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'original' | 'webtoon'>('original');
+
+  // 썰툰 상태
+  const [scenes, setScenes] = useState<WebtoonScene[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [genProgress, setGenProgress] = useState('');
 
   useEffect(() => {
     if (!id) return;
@@ -20,11 +23,8 @@ export default function PostDetail() {
 
     getPostDetail(id)
       .then((data) => {
-        console.log('[PostDetail] 데이터 수신:', { title: data.title, contentLength: data.content.length, content: data.content });
+        console.log('[PostDetail] 데이터 수신:', { title: data.title, contentLength: data.content.length });
         setPost(data);
-        const generatedPanels = textToPanels(data.title, data.content, data.topComments);
-        console.log('[PostDetail] 패널 생성:', generatedPanels.length, '개');
-        setPanels(generatedPanels);
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.');
@@ -33,6 +33,25 @@ export default function PostDetail() {
         setLoading(false);
       });
   }, [id]);
+
+  const handleGenerate = async () => {
+    if (!post || post.content.length === 0) return;
+    setGenerating(true);
+    setGenError(null);
+    setGenProgress('AI가 웹툰을 그리고 있습니다... (30초~1분 소요)');
+
+    try {
+      const result = await generateWebtoon(post.title, post.content);
+      setScenes(result);
+      console.log('[PostDetail] 썰툰 생성 완료:', result.length, '장면');
+    } catch (err) {
+      console.error('[PostDetail] 썰툰 생성 실패:', err);
+      setGenError(err instanceof Error ? err.message : '썰툰 생성에 실패했습니다.');
+    } finally {
+      setGenerating(false);
+      setGenProgress('');
+    }
+  };
 
   if (loading) {
     return (
@@ -53,10 +72,7 @@ export default function PostDetail() {
       <div className="text-center py-20">
         <p className="text-5xl mb-4">😵</p>
         <p className="text-lg text-gray-600 mb-4">{error}</p>
-        <Link
-          to="/"
-          className="text-orange-500 hover:text-orange-600 font-medium"
-        >
+        <Link to="/" className="text-orange-500 hover:text-orange-600 font-medium">
           목록으로 돌아가기
         </Link>
       </div>
@@ -131,9 +147,7 @@ export default function PostDetail() {
                     <span className="text-xs font-medium text-gray-500">{comment.author}</span>
                     <p className="text-sm text-gray-800 mt-1">{comment.text}</p>
                     {comment.likes > 0 && (
-                      <span className="text-xs text-red-400 mt-1 inline-block">
-                        ♥ {comment.likes}
-                      </span>
+                      <span className="text-xs text-red-400 mt-1 inline-block">♥ {comment.likes}</span>
                     )}
                   </div>
                 ))}
@@ -146,45 +160,98 @@ export default function PostDetail() {
       {/* 썰툰 탭 */}
       {activeTab === 'webtoon' && (
         <div>
-          {/* 패널 미리보기 */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-            <h3 className="text-sm font-bold text-gray-600 mb-3">
-              생성될 패널 ({panels.length}개)
-            </h3>
-            <div className="space-y-2 max-h-60 overflow-y-auto">
-              {panels.map((panel, i) => (
-                <div
-                  key={i}
-                  className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
-                    panel.type === 'title'
-                      ? 'bg-orange-50 text-orange-800'
-                      : panel.type === 'dialogue'
-                        ? 'bg-blue-50 text-blue-800'
-                        : panel.type === 'comment'
-                          ? 'bg-gray-50 text-gray-700'
-                          : 'bg-green-50 text-green-800'
-                  }`}
-                >
-                  <span className="shrink-0 text-xs font-mono text-gray-400 w-6">
-                    {i + 1}
-                  </span>
-                  <span className="shrink-0 text-xs font-medium px-1.5 py-0.5 rounded bg-white/60">
-                    {panel.type === 'title'
-                      ? '제목'
-                      : panel.type === 'dialogue'
-                        ? '대화'
-                        : panel.type === 'comment'
-                          ? '댓글'
-                          : '서술'}
-                  </span>
-                  <span className="truncate">{panel.text}</span>
+          {/* 생성 버튼 */}
+          {scenes.length === 0 && !generating && (
+            <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+              <p className="text-5xl mb-4">🎨</p>
+              <p className="text-lg font-medium text-gray-700 mb-2">AI가 이 이야기를 웹툰으로 그려드립니다</p>
+              <p className="text-sm text-gray-500 mb-6">Gemini AI가 각 장면을 웹툰 스타일로 생성합니다</p>
+              <button
+                onClick={handleGenerate}
+                disabled={post.content.length === 0}
+                className="px-8 py-3 bg-gradient-to-r from-orange-500 to-red-500 text-white font-semibold rounded-lg hover:from-orange-600 hover:to-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md text-lg"
+              >
+                썰툰 만들기
+              </button>
+              {post.content.length === 0 && (
+                <p className="text-xs text-red-400 mt-3">원문이 없어 썰툰을 생성할 수 없습니다</p>
+              )}
+            </div>
+          )}
+
+          {/* 생성 중 */}
+          {generating && (
+            <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-orange-200 border-t-orange-500 mb-4" />
+              <p className="text-lg font-medium text-gray-700">{genProgress}</p>
+              <p className="text-sm text-gray-400 mt-2">장면별로 이미지를 생성하고 있어요</p>
+            </div>
+          )}
+
+          {/* 에러 */}
+          {genError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+              <p className="font-medium">썰툰 생성 실패</p>
+              <p className="text-sm mt-1">{genError}</p>
+              <button onClick={handleGenerate} className="mt-2 text-sm text-red-600 underline hover:text-red-800">
+                다시 시도
+              </button>
+            </div>
+          )}
+
+          {/* 생성된 썰툰 */}
+          {scenes.length > 0 && (
+            <div className="space-y-0">
+              {/* 제목 배너 */}
+              <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white text-center py-6 rounded-t-xl">
+                <p className="text-xs font-medium opacity-80 mb-1">썰툰</p>
+                <h3 className="text-xl font-bold px-4">{post.title}</h3>
+              </div>
+
+              {/* 장면들 */}
+              {scenes.map((scene, i) => (
+                <div key={i} className="bg-white border-x border-gray-200">
+                  {/* AI 생성 이미지 */}
+                  {scene.imageBase64 ? (
+                    <img
+                      src={`data:${scene.mimeType};base64,${scene.imageBase64}`}
+                      alt={`장면 ${i + 1}`}
+                      className="w-full"
+                    />
+                  ) : (
+                    <div className="bg-gray-100 py-20 text-center text-gray-400">
+                      <p className="text-3xl mb-2">🖼️</p>
+                      <p className="text-sm">이미지 생성 실패</p>
+                    </div>
+                  )}
+
+                  {/* 장면 텍스트 오버레이 */}
+                  <div className="px-6 py-4 bg-white border-b border-gray-100">
+                    <p className="text-[15px] text-gray-800 leading-relaxed whitespace-pre-line">
+                      {scene.sceneText}
+                    </p>
+                  </div>
                 </div>
               ))}
-            </div>
-          </div>
 
-          {/* 캔버스 */}
-          <WebtoonCanvas panels={panels} title={post.title} />
+              {/* 하단 */}
+              <div className="bg-gray-800 text-white text-center py-6 rounded-b-xl">
+                <p className="text-sm opacity-60">- 끝 -</p>
+                <p className="text-xs opacity-40 mt-1">AI가 생성한 썰툰입니다</p>
+              </div>
+
+              {/* 다시 생성 버튼 */}
+              <div className="text-center mt-4">
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating}
+                  className="px-6 py-2.5 bg-white text-gray-700 font-semibold rounded-lg border border-gray-300 hover:bg-gray-50 transition-all shadow-sm"
+                >
+                  다시 생성하기
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
