@@ -41,17 +41,30 @@ router.post('/api/generate-webtoon', async (req: Request, res: Response) => {
   try {
     const { title, content } = req.body as { title: string; content: string[] };
 
+    console.log(`[route] 썰툰 요청 body:`, JSON.stringify({ title, contentLength: content?.length }));
+
     if (!title || !content || content.length === 0) {
+      console.log(`[route] 제목/본문 누락`);
       res.status(400).json({ error: '제목과 본문이 필요합니다.' });
       return;
     }
 
-    console.log(`[route] 썰툰 생성 요청: "${title}" (${content.length}문단)`);
+    const apiKey = process.env.GEMINI_API_KEY;
+    console.log(`[route] GEMINI_API_KEY 설정 여부: ${apiKey ? '있음 (' + apiKey.substring(0, 10) + '...)' : '없음!'}`);
+
+    if (!apiKey) {
+      res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 설정되지 않았습니다.' });
+      return;
+    }
+
+    console.log(`[route] generateWebtoonImages 호출 시작...`);
     const scenes = await generateWebtoonImages(title, content);
+    console.log(`[route] generateWebtoonImages 완료: ${scenes.length}개 장면`);
     res.json({ scenes });
   } catch (error) {
-    console.error('썰툰 생성 실패:', error);
-    res.status(500).json({ error: '썰툰 생성에 실패했습니다.' });
+    console.error('[route] 썰툰 생성 실패:', (error as Error).message);
+    console.error('[route] 스택:', (error as Error).stack);
+    res.status(500).json({ error: `썰툰 생성에 실패했습니다: ${(error as Error).message}` });
   }
 });
 

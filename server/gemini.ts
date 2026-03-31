@@ -97,6 +97,9 @@ export async function generateWebtoonImages(
   title: string,
   paragraphs: string[],
 ): Promise<WebtoonScene[]> {
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY 환경변수가 설정되지 않았습니다.');
+  }
   const scenes = groupIntoScenes(title, paragraphs);
   const results: WebtoonScene[] = [];
 
